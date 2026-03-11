@@ -617,6 +617,57 @@ restart_web_stack() {
   systemctl restart "$svc"
 }
 
+nginx_emergency_http_restore() {
+  local domain www conf backend_port
+  domain="$(cfg_get DOMAIN "")"
+  www="$(cfg_get DOMAIN_WWW "")"
+  backend_port="$(cfg_get BACKEND_PORT "3000")"
+  conf="/etc/nginx/sites-available/$domain.conf"
+
+  [ -n "$domain" ] || { echo "Define DOMAIN primero."; return 1; }
+  require_root || return 1
+
+  cat > "$conf" <<EOC
+server {
+    listen 80;
+    server_name $domain $www;
+
+    location / {
+        proxy_pass http://127.0.0.1:$backend_port;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOC
+
+  ln -sf "$conf" "/etc/nginx/sites-enabled/$domain.conf"
+  nginx -t
+  systemctl restart nginx
+  echo "Recovery HTTP aplicado para $domain."
+}
+
+nginx_repair_https_certbot() {
+  local domain www email
+  domain="$(cfg_get DOMAIN "")"
+  www="$(cfg_get DOMAIN_WWW "")"
+  email="$(cfg_get ADMIN_EMAIL "")"
+
+  [ -n "$domain" ] || { echo "Define DOMAIN primero."; return 1; }
+  [ -n "$email" ] || { echo "Define ADMIN_EMAIL primero."; return 1; }
+  require_root || return 1
+  is_cmd certbot || { echo "certbot no instalado."; return 1; }
+  is_cmd nginx || { echo "nginx no instalado."; return 1; }
+
+  if [ -n "$www" ]; then
+    certbot --nginx -d "$domain" -d "$www" --agree-tos -m "$email" --redirect --non-interactive
+  else
+    certbot --nginx -d "$domain" --agree-tos -m "$email" --redirect --non-interactive
+  fi
+}
+
 nginx_enable_site() {
   local domain conf_link
   domain="$(cfg_get DOMAIN "")"
@@ -648,7 +699,9 @@ page_nginx() {
     echo "6) Restart Nginx"
     echo "7) Restart stack web (Nginx + backend)"
     echo "8) Ver estado Nginx"
-    echo "9) Volver"
+    echo "9) Recovery HTTP minimo (emergencia)"
+    echo "10) Reparar HTTPS con Certbot"
+    echo "11) Volver"
     line
     if ! read -r -p "Opcion: " opt; then return; fi
     case "$opt" in
@@ -660,7 +713,9 @@ page_nginx() {
       6) run_and_pause "Restart Nginx" nginx_restart_service ;;
       7) run_and_pause "Restart stack web" restart_web_stack ;;
       8) run_and_pause "Ver estado Nginx" systemctl status nginx --no-pager ;;
-      9) return ;;
+      9) run_and_pause "Recovery HTTP emergencia" nginx_emergency_http_restore ;;
+      10) run_and_pause "Reparar HTTPS con certbot" nginx_repair_https_certbot ;;
+      11) return ;;
       *) echo "Opcion invalida" ;;
     esac
   done
