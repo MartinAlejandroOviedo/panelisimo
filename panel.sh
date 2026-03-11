@@ -499,6 +499,7 @@ nginx_write_site() {
   root_dir="/var/www/$domain/public"
   conf="/etc/nginx/sites-available/$domain.conf"
   require_root || return 1
+  nginx_backup_site_conf "$domain" || true
 
   mkdir -p "$root_dir"
 
@@ -597,6 +598,19 @@ nginx_apply_cache_defaults() {
   echo "Politica de cache aplicada en Nginx."
 }
 
+nginx_backup_site_conf() {
+  local domain="$1"
+  local src backup_dir dst
+  src="/etc/nginx/sites-available/$domain.conf"
+  backup_dir="$LOG_DIR/nginx-backups/$domain"
+  mkdir -p "$backup_dir"
+  if [ -f "$src" ]; then
+    dst="$backup_dir/${domain}.conf.$(date +%Y%m%d_%H%M%S).bak"
+    cp "$src" "$dst"
+    echo "Backup Nginx creado: $dst"
+  fi
+}
+
 nginx_reload_safe() {
   require_root || return 1
   nginx -t
@@ -613,7 +627,7 @@ restart_web_stack() {
   svc="$(cfg_get BACKEND_SERVICE "carthtml")"
   require_root || return 1
   nginx -t
-  systemctl restart nginx
+  systemctl reload nginx
   systemctl restart "$svc"
 }
 
@@ -626,6 +640,7 @@ nginx_emergency_http_restore() {
 
   [ -n "$domain" ] || { echo "Define DOMAIN primero."; return 1; }
   require_root || return 1
+  nginx_backup_site_conf "$domain" || true
 
   cat > "$conf" <<EOC
 server {
@@ -645,7 +660,7 @@ EOC
 
   ln -sf "$conf" "/etc/nginx/sites-enabled/$domain.conf"
   nginx -t
-  systemctl restart nginx
+  systemctl reload nginx
   echo "Recovery HTTP aplicado para $domain."
 }
 
@@ -681,8 +696,28 @@ nginx_enable_site() {
   conf_link="/etc/nginx/sites-enabled/$domain.conf"
   ln -sf "/etc/nginx/sites-available/$domain.conf" "$conf_link"
   nginx -t
-  systemctl restart nginx
-  echo "Sitio habilitado y Nginx reiniciado."
+  systemctl reload nginx
+  echo "Sitio habilitado y Nginx recargado."
+}
+
+nginx_rollback_last_conf() {
+  local domain backup_dir latest dst
+  domain="$(cfg_get DOMAIN "")"
+  [ -n "$domain" ] || { echo "Define DOMAIN primero."; return 1; }
+  require_root || return 1
+
+  backup_dir="$LOG_DIR/nginx-backups/$domain"
+  [ -d "$backup_dir" ] || { echo "No hay carpeta de backups: $backup_dir"; return 1; }
+
+  latest="$(ls -1t "$backup_dir"/*.bak 2>/dev/null | head -n1 || true)"
+  [ -n "$latest" ] || { echo "No hay backups para $domain."; return 1; }
+
+  dst="/etc/nginx/sites-available/$domain.conf"
+  cp "$latest" "$dst"
+  ln -sf "$dst" "/etc/nginx/sites-enabled/$domain.conf"
+  nginx -t
+  systemctl reload nginx
+  echo "Rollback aplicado desde: $latest"
 }
 
 page_nginx() {
@@ -694,14 +729,15 @@ page_nginx() {
     echo "1) Instalar Nginx"
     echo "2) Generar server block"
     echo "3) Aplicar cache recomendado (auto)"
-    echo "4) Habilitar sitio y reiniciar Nginx"
+    echo "4) Habilitar sitio y recargar Nginx"
     echo "5) Reload Nginx (config test)"
     echo "6) Restart Nginx"
     echo "7) Restart stack web (Nginx + backend)"
     echo "8) Ver estado Nginx"
     echo "9) Recovery HTTP minimo (emergencia)"
     echo "10) Reparar HTTPS con Certbot"
-    echo "11) Volver"
+    echo "11) Rollback ultima config Nginx"
+    echo "12) Volver"
     line
     if ! read -r -p "Opcion: " opt; then return; fi
     case "$opt" in
@@ -715,7 +751,8 @@ page_nginx() {
       8) run_and_pause "Ver estado Nginx" systemctl status nginx --no-pager ;;
       9) run_and_pause "Recovery HTTP emergencia" nginx_emergency_http_restore ;;
       10) run_and_pause "Reparar HTTPS con certbot" nginx_repair_https_certbot ;;
-      11) return ;;
+      11) run_and_pause "Rollback Nginx" nginx_rollback_last_conf ;;
+      12) return ;;
       *) echo "Opcion invalida" ;;
     esac
   done
@@ -793,6 +830,72 @@ backend_service_status() {
   systemctl status "$svc" --no-pager
 }
 
+backend_sync_npm_modules() {
+  local app_dir
+  app_dir="$(cfg_get BACKEND_APP_DIR "/opt/panelisimo/api")"
+  [ -f "$app_dir/package.json" ] || { echo "No existe package.json en $app_dir"; return 1; }
+  is_cmd npm || { echo "npm no instalado."; return 1; }
+
+  npm --prefix "$app_dir" install
+  if grep -q '"icons:vendor"' "$app_dir/package.json"; then
+    npm --prefix "$app_dir" run icons:vendor
+  fi
+  if grep -q '"tw:build"' "$app_dir/package.json"; then
+    npm --prefix "$app_dir" run tw:build
+  fi
+}
+
+backend_apply_express_api_nocache() {
+  local app_dir server_file mod_dir mod_file
+  app_dir="$(cfg_get BACKEND_APP_DIR "/var/www/carthtml")"
+  server_file="$app_dir/server.js"
+  mod_dir="$app_dir/mod"
+  mod_file="$mod_dir/cache_policy.js"
+
+  [ -f "$server_file" ] || { echo "No existe server.js en $app_dir"; return 1; }
+  mkdir -p "$mod_dir"
+
+  cat > "$mod_file" <<'EOC'
+function applyApiNoCache(app) {
+  app.use((req, res, next) => {
+    if (req.path && req.path.startsWith("/api/")) {
+      res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+      res.set("Pragma", "no-cache");
+      res.set("Expires", "0");
+    }
+    next();
+  });
+}
+
+module.exports = { applyApiNoCache };
+EOC
+
+  if ! grep -q 'mod/cache_policy' "$server_file"; then
+    if grep -q 'const express = require("express");' "$server_file"; then
+      sed -i '/const express = require("express");/a const { applyApiNoCache } = require("./mod/cache_policy");' "$server_file"
+    elif grep -q "const express = require('express');" "$server_file"; then
+      sed -i "/const express = require('express');/a const { applyApiNoCache } = require('./mod/cache_policy');" "$server_file"
+    else
+      echo 'const { applyApiNoCache } = require("./mod/cache_policy");' | cat - "$server_file" > "$server_file.tmp"
+      mv "$server_file.tmp" "$server_file"
+    fi
+  fi
+
+  if ! grep -q 'applyApiNoCache(app);' "$server_file"; then
+    if grep -q 'const app = express();' "$server_file"; then
+      sed -i '/const app = express();/a applyApiNoCache(app);' "$server_file"
+    elif grep -q 'let app = express();' "$server_file"; then
+      sed -i '/let app = express();/a applyApiNoCache(app);' "$server_file"
+    else
+      echo "No pude ubicar 'app = express()' para inyectar middleware."
+      return 1
+    fi
+  fi
+
+  chown -R www-data:www-data "$mod_dir" "$server_file" 2>/dev/null || true
+  echo "Middleware no-cache aplicado para rutas /api/*."
+}
+
 page_backend() {
   while true; do
     print_title "Backend REST Express + npm server"
@@ -805,7 +908,9 @@ page_backend() {
     echo "3) Generar servicio systemd"
     echo "4) Iniciar/Reiniciar servicio"
     echo "5) Ver estado servicio"
-    echo "6) Volver"
+    echo "6) Sincronizar modulos npm"
+    echo "7) Aplicar no-cache API en Express"
+    echo "8) Volver"
     line
     if ! read -r -p "Opcion: " opt; then return; fi
     case "$opt" in
@@ -814,7 +919,9 @@ page_backend() {
       3) run_and_pause "Generar servicio systemd" backend_write_service ;;
       4) run_and_pause "Reiniciar backend" restart_backend_service ;;
       5) run_and_pause "Ver estado backend" backend_service_status ;;
-      6) return ;;
+      6) run_and_pause "Sincronizar modulos npm" backend_sync_npm_modules ;;
+      7) run_and_pause "Aplicar no-cache API en Express" backend_apply_express_api_nocache ;;
+      8) return ;;
       *) echo "Opcion invalida" ;;
     esac
   done
