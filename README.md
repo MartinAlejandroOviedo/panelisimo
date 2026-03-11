@@ -1,2 +1,2 @@
-# panelisimo
+# panelissimo
  instalador de panel de control
