@@ -597,6 +597,26 @@ nginx_apply_cache_defaults() {
   echo "Politica de cache aplicada en Nginx."
 }
 
+nginx_reload_safe() {
+  require_root || return 1
+  nginx -t
+  systemctl reload nginx
+}
+
+nginx_restart_service() {
+  require_root || return 1
+  systemctl restart nginx
+}
+
+restart_web_stack() {
+  local svc
+  svc="$(cfg_get BACKEND_SERVICE "carthtml")"
+  require_root || return 1
+  nginx -t
+  systemctl restart nginx
+  systemctl restart "$svc"
+}
+
 nginx_enable_site() {
   local domain conf_link
   domain="$(cfg_get DOMAIN "")"
@@ -624,8 +644,11 @@ page_nginx() {
     echo "2) Generar server block"
     echo "3) Aplicar cache recomendado (auto)"
     echo "4) Habilitar sitio y reiniciar Nginx"
-    echo "5) Ver estado Nginx"
-    echo "6) Volver"
+    echo "5) Reload Nginx (config test)"
+    echo "6) Restart Nginx"
+    echo "7) Restart stack web (Nginx + backend)"
+    echo "8) Ver estado Nginx"
+    echo "9) Volver"
     line
     if ! read -r -p "Opcion: " opt; then return; fi
     case "$opt" in
@@ -633,8 +656,11 @@ page_nginx() {
       2) run_and_pause "Generar server block" nginx_write_site ;;
       3) run_and_pause "Aplicar cache recomendado en Nginx" nginx_apply_cache_defaults ;;
       4) run_and_pause "Habilitar sitio Nginx" nginx_enable_site ;;
-      5) run_and_pause "Ver estado Nginx" systemctl status nginx --no-pager ;;
-      6) return ;;
+      5) run_and_pause "Reload Nginx seguro" nginx_reload_safe ;;
+      6) run_and_pause "Restart Nginx" nginx_restart_service ;;
+      7) run_and_pause "Restart stack web" restart_web_stack ;;
+      8) run_and_pause "Ver estado Nginx" systemctl status nginx --no-pager ;;
+      9) return ;;
       *) echo "Opcion invalida" ;;
     esac
   done
