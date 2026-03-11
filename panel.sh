@@ -485,10 +485,11 @@ page_dns() {
 }
 
 nginx_write_site() {
-  local domain backend_port root_dir conf profile
+  local domain backend_port root_dir conf profile app_dir
   domain="$(cfg_get DOMAIN "")"
   backend_port="$(cfg_get BACKEND_PORT "3000")"
   profile="$(cfg_get APP_PROFILE "")"
+  app_dir="$(cfg_get BACKEND_APP_DIR "/var/www/carthtml")"
 
   if [ -z "$domain" ]; then
     echo "Debes definir DOMAIN en la seccion DNS primero."
@@ -506,8 +507,32 @@ nginx_write_site() {
 server {
     listen 80;
     server_name $domain $(cfg_get DOMAIN_WWW "");
+    root $app_dir/public;
+
+    location ~* \.(css|js|mjs|png|jpg|jpeg|gif|webp|svg|ico|woff|woff2)$ {
+        try_files \$uri @app;
+        expires 30d;
+        add_header Cache-Control "public, max-age=2592000, immutable" always;
+        access_log off;
+    }
+
+    location /uploads/ {
+        try_files \$uri @app;
+        expires 7d;
+        add_header Cache-Control "public, max-age=604800" always;
+    }
+
+    location ~* \.(html)$ {
+        try_files \$uri @app;
+        expires -1;
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+    }
 
     location / {
+        try_files \$uri @app;
+    }
+
+    location @app {
         proxy_pass http://127.0.0.1:$backend_port;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
@@ -525,6 +550,22 @@ server {
 
     root $root_dir;
     index index.html;
+
+    location ~* \.(css|js|mjs|png|jpg|jpeg|gif|webp|svg|ico|woff|woff2)$ {
+        expires 30d;
+        add_header Cache-Control "public, max-age=2592000, immutable" always;
+        access_log off;
+    }
+
+    location /uploads/ {
+        expires 7d;
+        add_header Cache-Control "public, max-age=604800" always;
+    }
+
+    location ~* \.(html)$ {
+        expires -1;
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+    }
 
     location / {
         try_files \$uri \$uri/ /index.html;
@@ -548,6 +589,12 @@ EOC
   else
     echo "Directorio frontend: $root_dir"
   fi
+}
+
+nginx_apply_cache_defaults() {
+  nginx_write_site
+  nginx_enable_site
+  echo "Politica de cache aplicada en Nginx."
 }
 
 nginx_enable_site() {
@@ -575,17 +622,19 @@ page_nginx() {
     line
     echo "1) Instalar Nginx"
     echo "2) Generar server block"
-    echo "3) Habilitar sitio y reiniciar Nginx"
-    echo "4) Ver estado Nginx"
-    echo "5) Volver"
+    echo "3) Aplicar cache recomendado (auto)"
+    echo "4) Habilitar sitio y reiniciar Nginx"
+    echo "5) Ver estado Nginx"
+    echo "6) Volver"
     line
     if ! read -r -p "Opcion: " opt; then return; fi
     case "$opt" in
       1) run_and_pause "Instalar Nginx" install_packages nginx ;;
       2) run_and_pause "Generar server block" nginx_write_site ;;
-      3) run_and_pause "Habilitar sitio Nginx" nginx_enable_site ;;
-      4) run_and_pause "Ver estado Nginx" systemctl status nginx --no-pager ;;
-      5) return ;;
+      3) run_and_pause "Aplicar cache recomendado en Nginx" nginx_apply_cache_defaults ;;
+      4) run_and_pause "Habilitar sitio Nginx" nginx_enable_site ;;
+      5) run_and_pause "Ver estado Nginx" systemctl status nginx --no-pager ;;
+      6) return ;;
       *) echo "Opcion invalida" ;;
     esac
   done
