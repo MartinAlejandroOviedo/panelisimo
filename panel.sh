@@ -139,6 +139,16 @@ is_valid_port() {
   [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ]
 }
 
+is_valid_backend_endpoint() {
+  local endpoint="$1"
+  local host port
+  host="${endpoint%:*}"
+  port="${endpoint##*:}"
+  [ "$host" != "$endpoint" ] || return 1
+  is_valid_port "$port" || return 1
+  [[ "$host" =~ ^(localhost|[A-Za-z0-9.-]+)$ ]]
+}
+
 run_action() {
   local desc="$1"
   shift
@@ -484,12 +494,78 @@ page_dns() {
   done
 }
 
+nginx_get_lb_info() {
+  local enabled algo backends
+  enabled="$(cfg_get LB_ENABLED "0")"
+  algo="$(cfg_get LB_ALGO "round_robin")"
+  backends="$(cfg_get LB_BACKENDS "")"
+  if [ "$enabled" = "1" ]; then
+    echo "ON ($algo) -> ${backends:-sin-backends}"
+  else
+    echo "OFF"
+  fi
+}
+
+nginx_configure_load_balancing() {
+  local enable algo backends normalized token first backend_port
+  backend_port="$(cfg_get BACKEND_PORT "3000")"
+
+  echo "Balanceo actual: $(nginx_get_lb_info)"
+  if ! read -r -p "Habilitar load balancing? [s/N]: " enable; then return 1; fi
+  case "$enable" in
+    s|S|si|SI|Si|y|Y|yes|YES) cfg_set LB_ENABLED "1" ;;
+    *) cfg_set LB_ENABLED "0"; echo "Load balancing deshabilitado."; return 0 ;;
+  esac
+
+  echo "Algoritmo actual: $(cfg_get LB_ALGO "round_robin")"
+  echo "1) round_robin"
+  echo "2) least_conn"
+  echo "3) ip_hash"
+  if ! read -r -p "Elegi algoritmo [1-3] (default 1): " algo; then return 1; fi
+  case "${algo:-1}" in
+    1) cfg_set LB_ALGO "round_robin" ;;
+    2) cfg_set LB_ALGO "least_conn" ;;
+    3) cfg_set LB_ALGO "ip_hash" ;;
+    *) echo "Algoritmo invalido."; return 1 ;;
+  esac
+
+  echo "Backends actuales: $(cfg_get LB_BACKENDS "127.0.0.1:$backend_port")"
+  if ! read -r -p "Backends (host:puerto separados por coma): " backends; then return 1; fi
+  backends="${backends:-127.0.0.1:$backend_port}"
+  normalized=""
+  first=1
+  for token in ${backends//,/ }; do
+    [ -n "$token" ] || continue
+    if ! is_valid_backend_endpoint "$token"; then
+      echo "Backend invalido: $token"
+      return 1
+    fi
+    if [ "$first" -eq 1 ]; then
+      normalized="$token"
+      first=0
+    else
+      normalized="$normalized,$token"
+    fi
+  done
+  [ -n "$normalized" ] || { echo "Debes indicar al menos un backend."; return 1; }
+  cfg_set LB_BACKENDS "$normalized"
+  echo "Load balancing guardado: $(nginx_get_lb_info)"
+}
+
 nginx_write_site() {
   local domain backend_port root_dir conf profile app_dir
+  local lb_enabled lb_algo lb_backends upstream_name lb_algo_line lb_servers proxy_target
   domain="$(cfg_get DOMAIN "")"
   backend_port="$(cfg_get BACKEND_PORT "3000")"
   profile="$(cfg_get APP_PROFILE "")"
   app_dir="$(cfg_get BACKEND_APP_DIR "/var/www/carthtml")"
+  lb_enabled="$(cfg_get LB_ENABLED "0")"
+  lb_algo="$(cfg_get LB_ALGO "round_robin")"
+  lb_backends="$(cfg_get LB_BACKENDS "")"
+  upstream_name="panelisimo_backend"
+  lb_algo_line=""
+  lb_servers=""
+  proxy_target="http://127.0.0.1:$backend_port"
 
   if [ -z "$domain" ]; then
     echo "Debes definir DOMAIN en la seccion DNS primero."
@@ -503,7 +579,72 @@ nginx_write_site() {
 
   mkdir -p "$root_dir"
 
+  if [ "$profile" = "carthtml" ] && [ "$lb_enabled" = "1" ]; then
+    [ -n "$lb_backends" ] || { echo "LB habilitado pero sin backends configurados."; return 1; }
+    case "$lb_algo" in
+      round_robin) lb_algo_line="" ;;
+      least_conn) lb_algo_line="    least_conn;" ;;
+      ip_hash) lb_algo_line="    ip_hash;" ;;
+      *) echo "Algoritmo LB invalido: $lb_algo"; return 1 ;;
+    esac
+    for token in ${lb_backends//,/ }; do
+      [ -n "$token" ] || continue
+      if ! is_valid_backend_endpoint "$token"; then
+        echo "Backend LB invalido: $token"
+        return 1
+      fi
+      lb_servers="${lb_servers}    server $token max_fails=3 fail_timeout=10s;"$'\n'
+    done
+    [ -n "$lb_servers" ] || { echo "No se pudo generar upstream LB."; return 1; }
+    proxy_target="http://$upstream_name"
+  fi
+
   if [ "$profile" = "carthtml" ]; then
+    if [ "$lb_enabled" = "1" ]; then
+      cat > "$conf" <<EOC
+upstream $upstream_name {
+$lb_algo_line
+$lb_servers}
+
+server {
+    listen 80;
+    server_name $domain $(cfg_get DOMAIN_WWW "");
+    root $app_dir/public;
+
+    location ~* \.(css|js|mjs|png|jpg|jpeg|gif|webp|svg|ico|woff|woff2)$ {
+        try_files \$uri @app;
+        expires 30d;
+        add_header Cache-Control "public, max-age=2592000, immutable" always;
+        access_log off;
+    }
+
+    location /uploads/ {
+        try_files \$uri @app;
+        expires 7d;
+        add_header Cache-Control "public, max-age=604800" always;
+    }
+
+    location ~* \.(html)$ {
+        try_files \$uri @app;
+        expires -1;
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+    }
+
+    location / {
+        try_files \$uri @app;
+    }
+
+    location @app {
+        proxy_pass $proxy_target;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOC
+    else
     cat > "$conf" <<EOC
 server {
     listen 80;
@@ -534,7 +675,7 @@ server {
     }
 
     location @app {
-        proxy_pass http://127.0.0.1:$backend_port;
+        proxy_pass $proxy_target;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -543,6 +684,7 @@ server {
     }
 }
 EOC
+    fi
   else
     cat > "$conf" <<EOC
 server {
@@ -586,7 +728,11 @@ EOC
 
   echo "Archivo generado: $conf"
   if [ "$profile" = "carthtml" ]; then
-    echo "Modo Nginx: reverse proxy completo -> 127.0.0.1:$backend_port"
+    if [ "$lb_enabled" = "1" ]; then
+      echo "Modo Nginx: load balancing $lb_algo -> $lb_backends"
+    else
+      echo "Modo Nginx: reverse proxy completo -> 127.0.0.1:$backend_port"
+    fi
   else
     echo "Directorio frontend: $root_dir"
   fi
@@ -725,6 +871,7 @@ page_nginx() {
     print_title "Nginx Reverse Proxy"
     echo "Dominio: $(cfg_get DOMAIN "sin-definir")"
     echo "Puerto backend: $(cfg_get BACKEND_PORT "3000")"
+    echo "Load balancing: $(nginx_get_lb_info)"
     line
     echo "1) Instalar Nginx"
     echo "2) Generar server block"
@@ -737,7 +884,8 @@ page_nginx() {
     echo "9) Recovery HTTP minimo (emergencia)"
     echo "10) Reparar HTTPS con Certbot"
     echo "11) Rollback ultima config Nginx"
-    echo "12) Volver"
+    echo "12) Configurar load balancing"
+    echo "13) Volver"
     line
     if ! read -r -p "Opcion: " opt; then return; fi
     case "$opt" in
@@ -752,7 +900,8 @@ page_nginx() {
       9) run_and_pause "Recovery HTTP emergencia" nginx_emergency_http_restore ;;
       10) run_and_pause "Reparar HTTPS con certbot" nginx_repair_https_certbot ;;
       11) run_and_pause "Rollback Nginx" nginx_rollback_last_conf ;;
-      12) return ;;
+      12) run_and_pause "Configurar load balancing" nginx_configure_load_balancing ;;
+      13) return ;;
       *) echo "Opcion invalida" ;;
     esac
   done
@@ -960,6 +1109,50 @@ sqlite_test() {
   sqlite3 "$db" 'select datetime("now") as now_utc;' || true
 }
 
+sqlite_apply_cache_profile() {
+  local profile db cache_kib mmap_bytes
+  db="$(cfg_get SQLITE_DB_PATH "/opt/panelisimo/data/app.db")"
+  [ -f "$db" ] || { echo "DB no existe: $db"; return 1; }
+  is_cmd sqlite3 || { echo "sqlite3 no instalado."; return 1; }
+
+  echo "Perfiles de cache SQLite:"
+  echo "1) suave  (cache 8MB, mmap 128MB)"
+  echo "2) medio  (cache 16MB, mmap 256MB)"
+  if ! read -r -p "Elegi perfil [1-2]: " profile; then return 1; fi
+
+  case "$profile" in
+    1) cache_kib=8192; mmap_bytes=134217728 ;;
+    2) cache_kib=16384; mmap_bytes=268435456 ;;
+    *) echo "Perfil invalido."; return 1 ;;
+  esac
+
+  sqlite3 "$db" <<SQL
+PRAGMA journal_mode=WAL;
+PRAGMA synchronous=NORMAL;
+PRAGMA cache_size=-$cache_kib;
+PRAGMA temp_store=MEMORY;
+PRAGMA busy_timeout=5000;
+PRAGMA mmap_size=$mmap_bytes;
+SQL
+
+  echo "Perfil SQLite aplicado sobre: $db"
+}
+
+sqlite_show_tuning() {
+  local db
+  db="$(cfg_get SQLITE_DB_PATH "/opt/panelisimo/data/app.db")"
+  [ -f "$db" ] || { echo "DB no existe: $db"; return 1; }
+  is_cmd sqlite3 || { echo "sqlite3 no instalado."; return 1; }
+  sqlite3 "$db" <<'SQL'
+PRAGMA journal_mode;
+PRAGMA synchronous;
+PRAGMA cache_size;
+PRAGMA temp_store;
+PRAGMA busy_timeout;
+PRAGMA mmap_size;
+SQL
+}
+
 page_sqlite() {
   while true; do
     print_title "SQLite"
@@ -969,7 +1162,9 @@ page_sqlite() {
     echo "2) Instalar sqlite3"
     echo "3) Crear DB + permisos"
     echo "4) Probar consulta"
-    echo "5) Volver"
+    echo "5) Aplicar cache SQLite (suave/medio)"
+    echo "6) Ver tuning actual"
+    echo "7) Volver"
     line
     if ! read -r -p "Opcion: " opt; then return; fi
     case "$opt" in
@@ -977,7 +1172,9 @@ page_sqlite() {
       2) run_and_pause "Instalar sqlite3" install_packages sqlite3 ;;
       3) run_and_pause "Crear DB SQLite" sqlite_create_db ;;
       4) run_and_pause "Probar SQLite" sqlite_test ;;
-      5) return ;;
+      5) run_and_pause "Aplicar cache SQLite" sqlite_apply_cache_profile ;;
+      6) run_and_pause "Ver tuning SQLite" sqlite_show_tuning ;;
+      7) return ;;
       *) echo "Opcion invalida" ;;
     esac
   done
