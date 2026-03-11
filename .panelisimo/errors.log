@@ -1,0 +1,10 @@
+[2026-03-11T15:17:19-03:00] Configurar dominio fallo con exit code 1
+[2026-03-11T15:17:19-03:00] ERROR no controlado (exit=1, linea=173): return "$rc"
+[2026-03-11T15:17:19-03:00] Habilitar sitio Nginx fallo con exit code 1
+[2026-03-11T15:17:19-03:00] ERROR no controlado (exit=1, linea=173): return "$rc"
+[2026-03-11T15:17:31-03:00] Configurar dominio fallo con exit code 1
+[2026-03-11T15:17:31-03:00] Habilitar sitio Nginx fallo con exit code 1
+[2026-03-11T15:17:34-03:00] Configurar dominio fallo con exit code 1
+[2026-03-11T15:22:53-03:00] Recolectar datos asistente fallo con exit code 1
+[2026-03-11T15:22:53-03:00] ERROR no controlado (exit=1, linea=474): read -r -p "Opcion: " opt
+[2026-03-11T15:23:46-03:00] Recolectar datos asistente fallo con exit code 1

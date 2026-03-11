@@ -1,0 +1,35 @@
+panelisimo 0.2.0
+Fecha: 2026-03-11T15:05:53-03:00
+Ruta app: /home/martin/Documentos/GitHub/panelisimo
+------------------------------------------------------------
+
+== Sistema ==
+OS:             Debian GNU/Linux 13 (trixie)
+Kernel:         6.19.6-1-liquorix-amd64
+Uptime:         up 5 hours, 29 minutes
+Load avg:       1.31 0.87 0.71
+CPU:            AMD Ryzen 5 2600 Six-Core Processor
+vCPU:           12
+RAM total:      31.29 GB
+RAM disponible: 24.78 GB
+
+== Red y Ubicacion ==
+Hostname:       debian
+FQDN:           debian
+IPs locales:    192.168.1.37 2802:8010:121c:ce00:636c:439f:a789:15b3 2802:8010:121c:ce00:f6b5:20ff:fe2b:5378
+Interfaz WAN:   enp4s0
+Gateway:        192.168.1.1
+IP publica:     181.26.29.153
+
+== Discos ==
+Filesystem     Type  Size  Used Avail Use% Mounted on
+/dev/nvme0n1p2 ext4  847G  424G  381G  53% /
+
+== Chequeos Iniciales ==
+[OK] RAM >= 1GB (32040 MiB)
+[OK] Disco libre >= 5GB (381 GiB)
+[WARN] SSH no activo
+[WARN] Nginx no instalado
+[OK] SQLite instalado
+------------------------------------------------------------
+Resultado: OK=3 WARN=2

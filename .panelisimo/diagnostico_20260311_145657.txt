@@ -1,0 +1,84 @@
+panelisimo 0.1.0
+Fecha: 2026-03-11T14:56:57-03:00
+Ruta app: /home/martin/Documentos/GitHub/panelisimo
+------------------------------------------------------------
+
+== Sistema ==
+OS:             Debian GNU/Linux 13 (trixie)
+Kernel:         6.19.6-1-liquorix-amd64
+Uptime:         up 5 hours, 21 minutes
+Load avg:       1.31 0.77 0.65
+CPU:            AMD Ryzen 5 2600 Six-Core Processor
+vCPU:           12
+RAM total:      31.29 GB
+RAM disponible: 25.15 GB
+
+== Red y Ubicacion ==
+Hostname:       debian
+FQDN:           debian
+IPs locales:    192.168.1.37 2802:8010:121c:ce00:636c:439f:a789:15b3 2802:8010:121c:ce00:f6b5:20ff:fe2b:5378
+Interfaz WAN:   enp4s0
+Gateway:        192.168.1.1
+IP publica:     181.26.29.153
+
+== Discos ==
+Filesystem     Type  Size  Used Avail Use% Mounted on
+/dev/nvme0n1p2 ext4  847G  424G  381G  53% /
+
+  NAME          SIZE TYPE MOUNTPOINT                       FSTYPE
+  loop0        55.5M loop /snap/core18/2999                squashfs
+  loop1        55.5M loop /snap/core18/2979                squashfs
+  loop2           4K loop /snap/bare/5                     squashfs
+  loop3         572K loop /snap/color-picker/26            squashfs
+  loop4        63.8M loop /snap/core20/2686                squashfs
+  loop5        63.8M loop /snap/core20/2717                squashfs
+  loop6          74M loop /snap/core22/2292                squashfs
+  loop7          74M loop /snap/core22/2339                squashfs
+  loop8        66.8M loop /snap/core24/1267                squashfs
+  loop9        64.7M loop /snap/electron-store/3           squashfs
+  loop10       66.9M loop /snap/core24/1349                squashfs
+  loop11       80.1M loop /snap/ffmpeg/1286                squashfs
+  loop12        193M loop /snap/gaming-graphics-core22/184 squashfs
+  loop13      242.6M loop /snap/gaming-graphics-core24/13  squashfs
+  loop14      245.3M loop /snap/gaming-graphics-core24/20  squashfs
+  loop15      164.8M loop /snap/gnome-3-28-1804/198        squashfs
+  loop16      516.2M loop /snap/gnome-42-2204/226          squashfs
+  loop17      531.4M loop /snap/gnome-42-2204/247          squashfs
+  loop18      669.8M loop /snap/gnome-46-2404/145          squashfs
+  loop19      606.1M loop /snap/gnome-46-2404/153          squashfs
+  loop20       91.7M loop /snap/gtk-common-themes/1535     squashfs
+  loop21      139.7M loop /snap/jdownloader2/20            squashfs
+  loop22        395M loop /snap/mesa-2404/1165             squashfs
+  loop23        5.5M loop /snap/olivia/144                 squashfs
+  loop24      373.4M loop /snap/qt5-core20/24              squashfs
+  loop25       50.9M loop /snap/snapd/25577                squashfs
+  loop26       48.1M loop /snap/snapd/25935                squashfs
+  loop27      238.8M loop /snap/steam/218                  squashfs
+  loop28      278.4M loop /snap/steam/231                  squashfs
+  loop29       83.8M loop /snap/telegram-desktop/6906      squashfs
+  loop30       83.8M loop /snap/telegram-desktop/6908      squashfs
+  loop31        141M loop /snap/typora/110                 squashfs
+  loop32        141M loop /snap/typora/112                 squashfs
+  loop33        121M loop /snap/ytdownloader/127           squashfs
+  loop34      135.9M loop /snap/ytdownloader/162           squashfs
+  sda         223.6G disk                                  
+  └─sda1      223.6G part /home/martin/Disco3              ntfs
+  sdb         931.5G disk                                  
+  ├─sdb1        300M part /home/martin/Disco1              vfat
+  ├─sdb2         16M part                                  
+  └─sdb3      931.2G part /home/martin/Disco2              ntfs
+  sdc         447.1G disk                                  
+  └─sdc1      447.1G part /home/martin/Disco4              ntfs
+  nvme0n1     894.3G disk                                  
+  ├─nvme0n1p1   976M part /boot/efi                        vfat
+  ├─nvme0n1p2 861.3G part /                                ext4
+  └─nvme0n1p3    32G part [SWAP]                           swap
+
+== Chequeos Iniciales ==
+[OK] RAM >= 1GB (32040 MiB)
+[OK] Disco libre >= 5GB (381 GiB)
+[WARN] SSH no activo
+[WARN] Nginx no instalado
+[OK] SQLite instalado
+------------------------------------------------------------
+Resultado: OK=3 WARN=2
